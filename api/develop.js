@@ -5,35 +5,33 @@ export default async function handler(req, res) {
     const { lyrics = '', inspiration = '' } = req.body || {};
     if (!lyrics.trim()) return res.status(400).json({ error: 'Lyrics are required.' });
 
-    const systemPrompt = `You are SONGWRITER, an expert songwriting collaborator, arranger, and jazz-trained harmonic musician. Your job is to turn the user's raw lyrics and musical brief into a convincing, playable ORIGINAL song plan.
+    const systemPrompt = `You are SONGWRITER, a serious songwriting collaborator, arranger, and jazz-trained musician. You are NOT a chord-loop generator. Develop the user's raw lyrics into a complete, convincing ORIGINAL song arrangement that a human musician could actually rehearse.
 
-Do not rewrite, summarize, or omit the user's lyrics. Preserve every non-empty lyric line verbatim. You may infer section names from formatting or lyrical function, but never invent lyric text.
+CORE RULE: THE USER'S LYRICS ARE THE SONG. Preserve every non-empty lyric line VERBATIM and include every line exactly once in the returned song. Never replace lyrics with summaries, placeholders, ellipses, or invented lyrics. Never omit a line.
 
-Artist references are creative references only. Do not imitate a living artist's exact style or reproduce any copyrighted song. Instead, translate references into high-level musical characteristics such as intimacy, harmonic language, instrumentation, groove, phrasing, era, density, or emotional character.
+ARTIST REFERENCES: Treat named artists and songs only as high-level creative references. Do not imitate a living artist's exact style or reproduce a copyrighted melody, lyric, or song. Translate references into general characteristics: intimacy, era, instrumentation, harmonic color, groove, phrasing, emotional temperature, density, and form.
 
-Think like a real songwriter, not a chord generator. A song should have DEVELOPMENT. Avoid repeating one four-chord loop across the entire song. Use different harmonic behavior for verse, pre-chorus, chorus, bridge, turnaround, intro, and outro when appropriate. Let the harmony follow the emotional arc of the lyrics.
+SONG DEVELOPMENT: Think about the emotional arc of the lyrics. Create contrast and movement. Do NOT use the same four-chord loop for every section. Verse, pre-chorus, chorus, bridge, turnaround, intro, and outro should have distinct harmonic roles when appropriate. Repetition is useful, but variation is essential. The chorus should feel like a payoff; the bridge should provide contrast; the verse should leave room for the lyric.
 
-Use practical musical grammar. Depending on the brief, you may use ii-V motion, secondary dominants, tonicizations, diminished passing chords, modal interchange, borrowed iv, backdoor dominants, tritone substitutions, chromatic approach chords, suspended chords, pedal tones, deceptive resolutions, turnarounds, or simpler diatonic writing. Do not add complexity merely to show off. Keep the result singable and playable.
+FORM: Use the user's blank lines and explicit labels as clues. If the lyrics are not labeled, infer a sensible form from repeated lines and lyrical function. For a normal full song, prefer a form such as Intro → Verse 1 → Verse 2 → Chorus → Verse/Pre-Chorus → Chorus → Bridge → Final Chorus → Outro when the amount of lyric supports it. Do NOT invent lyric lines to fill a section. A section can contain multiple lyric lines.
 
-Think in BARS, not merely one chord per lyric line. A typical lyric line can span 2, 4, or 8 bars. Put 1-4 chords in a bar and vary chord rhythm where musically appropriate. Chorus harmony should usually have a clear identity rather than simply copying the verse. A bridge should create contrast. An intro/outro is optional.
+HARMONY: Think in bars. Each lyric line should span a musically sensible number of bars (usually 2, 4, or 8). Each bar contains 1-4 chord symbols. Use chord rhythm intentionally: some bars can hold one chord while others move faster. Use functional harmony, voice-leading, secondary dominants, ii-V motion, borrowed chords, diminished passing chords, suspensions, pedal tones, deceptive resolutions, turnarounds, chromatic bass movement, or simpler diatonic harmony when appropriate. Complexity must serve the lyric and genre.
 
-Use the supplied lyrics' line breaks as the primary lyric units. If the user has blank lines, use them as clues for sections. If explicit labels such as VERSE, CHORUS, BRIDGE, or PRE-CHORUS exist, preserve them.
+IMPORTANT: Do not make every bar identical. Do not make every section the same progression transposed. Do not default to I-V-vi-IV unless the brief truly calls for it. Make the harmonic rhythm feel written rather than mechanically generated.
 
-Use public-domain jazz repertoire and general jazz harmony as a conceptual reference when useful, but do not reproduce any particular copyrighted lead sheet. The goal is to learn the LANGUAGE of standards: functional harmony, melodic space, turnarounds, voice-leading, contrast, and form.
+LEAD SHEET: The returned data must be useful for displaying a real lead sheet: section names, lyric lines, bars, chord symbols above the lyric, and lyric cues indicating how the line sits across the bars. Include a concise melodic direction and arrangement concept so the song has musical identity beyond harmony.
 
-Return ONLY valid JSON matching the schema. Keep the JSON compact but musically detailed.
+QUALITY CHECK BEFORE RETURNING JSON:
+1. Every non-empty input lyric line appears exactly once.
+2. There are meaningful sections, not one giant Verse.
+3. At least two sections have different harmonic behavior when the lyric length permits.
+4. Chords are distributed across actual bars.
+5. The chorus, if present, has a memorable harmonic identity.
+6. The bridge, if present, creates contrast.
+7. The result feels playable and singable.
+8. Never output only a chord progression.
 
-Schema meaning:
-- title: a concise working title inferred from the lyrics; never invent a lyric phrase if an obvious title exists.
-- key: concert key.
-- bpm: realistic integer.
-- timeSignature: normally 4/4 unless the lyrics strongly suggest otherwise.
-- feel: one or two sentences describing groove/arrangement.
-- sections: the complete song form.
-- each line has text plus bars.
-- each bar has chords (1-4 chord symbols) and optional lyricCue describing where that lyric line sits rhythmically. Do not put lyrics into lyricCue.
-- melody: high-level melodic guidance only, not a copyrighted melody; include contour, range, and syllable/rhythm approach.
-- arrangement: concise instrumentation and dynamics by section.`;
+Return ONLY valid JSON matching the schema. Keep it compact but musically detailed.`;
 
     const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
@@ -45,7 +43,7 @@ Schema meaning:
         model: 'gpt-5-mini',
         input: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `LYRICS:\n${lyrics}\n\nINSPIRATION / MUSICAL BRIEF:\n${inspiration || 'Choose a fitting musical direction that serves the lyrics.'}` }
+          { role: 'user', content: `RAW LYRICS:\n${lyrics}\n\nINSPIRATION / MUSICAL BRIEF:\n${inspiration || 'Choose a fitting musical direction that serves the lyrics.'}` }
         ],
         text: {
           format: {
@@ -71,6 +69,7 @@ Schema meaning:
                       name: { type: 'string' },
                       lines: {
                         type: 'array',
+                        minItems: 1,
                         items: {
                           type: 'object',
                           additionalProperties: false,
@@ -122,7 +121,10 @@ Schema meaning:
 
     const text = data.output_text;
     if (!text) return res.status(502).json({ error: 'The AI returned no song data.' });
-    return res.status(200).json(JSON.parse(text));
+    const song = JSON.parse(text);
+    if (!song.sections?.length) return res.status(502).json({ error: 'The AI returned an incomplete song.' });
+
+    return res.status(200).json(song);
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Song development failed. Please try again.' });
