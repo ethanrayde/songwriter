@@ -2,8 +2,10 @@ export const runtime = 'nodejs';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
-  headers: { 'content-type': 'application/json; charset=utf-8' }
+  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
 });
+
+const OPENAI_TIMEOUT_MS = 25000;
 
 export default async function handler(request) {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -38,80 +40,77 @@ ${requestedBpm ? `The songwriter explicitly requested ${requestedBpm} BPM. Retur
 
 Return ONLY valid JSON matching the requested schema.`;
 
-    const response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-5-mini',
-        input: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `RAW LYRICS:\n${lyrics}\n\nINSPIRATION / MUSICAL BRIEF:\n${inspiration || 'Choose a fitting musical direction that serves the lyrics.'}` }
-        ],
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'song_development',
-            strict: true,
-            schema: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                title: { type: 'string' },
-                key: { type: 'string' },
-                bpm: { type: 'number' },
-                timeSignature: { type: 'string' },
-                feel: { type: 'string' },
-                sections: {
-                  type: 'array', minItems: 1,
-                  items: {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+
+    let response;
+    try {
+      response = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-5-mini',
+          input: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `RAW LYRICS:\n${lyrics}\n\nINSPIRATION / MUSICAL BRIEF:\n${inspiration || 'Choose a fitting musical direction that serves the lyrics.'}` }
+          ],
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'song_development',
+              strict: true,
+              schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  title: { type: 'string' },
+                  key: { type: 'string' },
+                  bpm: { type: 'number' },
+                  timeSignature: { type: 'string' },
+                  feel: { type: 'string' },
+                  sections: { type: 'array', minItems: 1, items: {
                     type: 'object', additionalProperties: false,
                     properties: {
                       name: { type: 'string' },
-                      lines: {
-                        type: 'array', minItems: 1,
-                        items: {
-                          type: 'object', additionalProperties: false,
-                          properties: {
-                            text: { type: 'string' },
-                            bars: {
-                              type: 'array', minItems: 1, maxItems: 8,
-                              items: {
-                                type: 'object', additionalProperties: false,
-                                properties: {
-                                  chords: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string' } },
-                                  lyricCue: { type: 'string' }
-                                },
-                                required: ['chords', 'lyricCue']
-                              }
-                            }
-                          },
-                          required: ['text', 'bars']
-                        }
-                      }
+                      lines: { type: 'array', minItems: 1, items: {
+                        type: 'object', additionalProperties: false,
+                        properties: {
+                          text: { type: 'string' },
+                          bars: { type: 'array', minItems: 1, maxItems: 8, items: {
+                            type: 'object', additionalProperties: false,
+                            properties: {
+                              chords: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string' } },
+                              lyricCue: { type: 'string' }
+                            },
+                            required: ['chords', 'lyricCue']
+                          } }
+                        },
+                        required: ['text', 'bars']
+                      } }
                     },
                     required: ['name', 'lines']
-                  }
+                  } },
+                  melody: { type: 'object', additionalProperties: false, properties: {
+                    contour: { type: 'string' }, range: { type: 'string' }, rhythm: { type: 'string' }
+                  }, required: ['contour', 'range', 'rhythm'] },
+                  arrangement: { type: 'string' }
                 },
-                melody: {
-                  type: 'object', additionalProperties: false,
-                  properties: {
-                    contour: { type: 'string' },
-                    range: { type: 'string' },
-                    rhythm: { type: 'string' }
-                  },
-                  required: ['contour', 'range', 'rhythm']
-                },
-                arrangement: { type: 'string' }
-              },
-              required: ['title', 'key', 'bpm', 'timeSignature', 'feel', 'sections', 'melody', 'arrangement']
+                required: ['title', 'key', 'bpm', 'timeSignature', 'feel', 'sections', 'melody', 'arrangement']
+              }
             }
           }
         }
-      })
-    });
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') return json({ error: 'Song development timed out after 25 seconds. Try a shorter lyric draft.' }, 504);
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     const raw = await response.text();
     let data;
